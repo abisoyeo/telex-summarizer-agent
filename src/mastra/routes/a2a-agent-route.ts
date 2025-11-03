@@ -94,7 +94,7 @@ export const a2aAgentRoute = registerApiRoute("/a2a/agent/:agentId", {
 
       const response = await agent.generate(mastraMessages);
 
-      const agentText = response.text || "Sorry, I could not summarize that.";
+      const agentText = response.text || "Sorry, I could not understand that.";
       const artifacts = [
         {
           artifactId: randomUUID(),
@@ -120,7 +120,6 @@ export const a2aAgentRoute = registerApiRoute("/a2a/agent/:agentId", {
         });
       }
 
-      // Build history (user + agent messages)
       const history = [
         ...messagesList.map((msg: any) => ({
           kind: "message",

@@ -3,9 +3,10 @@ import { PinoLogger } from "@mastra/loggers";
 import { LibSQLStore } from "@mastra/libsql";
 import { summarizerAgent } from "./agents/summarizer-agent";
 import { a2aAgentRoute } from "./routes/a2a-agent-route";
+import { strategicAdvisorAgent } from "./agents/strategic-advisor-agent";
 
 export const mastra = new Mastra({
-  agents: { summarizerAgent },
+  agents: { summarizerAgent, strategicAdvisorAgent },
   storage: new LibSQLStore({
     // stores observability, scores, ... into memory storage, if it needs to persist, change to file:../mastra.db
     url: ":memory:",
