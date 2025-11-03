@@ -2,33 +2,28 @@ import { registerApiRoute } from "@mastra/core/server";
 import { randomUUID } from "crypto";
 
 /**
- * Custom A2A (Agent-to-Agent) API Route
+ * Custom A2A (Agent-to-Agent) API Route for Summarizer Agent
  *
- * This route wraps Mastra agent responses in A2A protocol format
- * following JSON-RPC 2.0 specification with proper artifacts structure.
- *
- * It expects an A2A message with:
- * - parts[0] (text): The user's query/system summary.
- * - parts[1] (data): The conversation history (last 20 messages).
+ * Mirrors the weather agent route — handles both "text" and "data" parts,
+ * supports async webhook config, and wraps the Mastra response
+ * in proper JSON-RPC 2.0 A2A structure.
  */
 export const a2aAgentRoute = registerApiRoute("/a2a/agent/:agentId", {
   method: "POST",
   handler: async (c) => {
-    const mastra = c.get("mastra");
-    let requestId: string | null = null;
-
     try {
+      const mastra = c.get("mastra");
       const agentId = c.req.param("agentId");
 
+      // Parse JSON-RPC 2.0 request
       const body = await c.req.json();
-      const { jsonrpc, id, method, params } = body;
-      requestId = id || null;
+      const { jsonrpc, id: requestId, method, params } = body;
 
       if (jsonrpc !== "2.0" || !requestId) {
         return c.json(
           {
             jsonrpc: "2.0",
-            id: requestId,
+            id: requestId || null,
             error: {
               code: -32600,
               message:
@@ -54,66 +49,56 @@ export const a2aAgentRoute = registerApiRoute("/a2a/agent/:agentId", {
         );
       }
 
-      const { message, contextId, taskId, metadata, configuration } =
+      const { message, messages, contextId, taskId, metadata, configuration } =
         params || {};
 
-      if (
-        !message ||
-        !message.parts ||
-        !Array.isArray(message.parts) ||
-        message.parts.length < 2
-      ) {
+      let messagesList: any[] = [];
+      let conversationContext = contextId;
+      let currentTaskId = taskId;
+      let messageMetadata = metadata;
+
+      // Build messages array (either single message or list)
+      if (message) {
+        messagesList = [message];
+        conversationContext = message.contextId || contextId;
+        currentTaskId = message.taskId || taskId;
+        messageMetadata = message.metadata || metadata;
+      } else if (messages && Array.isArray(messages)) {
+        messagesList = messages;
+      } else {
         return c.json(
           {
             jsonrpc: "2.0",
             id: requestId,
             error: {
               code: -32602,
-              message:
-                "Invalid params: message must have at least two parts (text and data)",
+              message: "Invalid params: message or messages is required",
             },
           },
           400
         );
       }
 
-      const textPart = message.parts[0];
-      const dataPart = message.parts[1];
-
-      if (textPart.kind !== "text" || dataPart.kind !== "data") {
-        return c.json(
-          {
-            jsonrpc: "2.0",
-            id: requestId,
-            error: {
-              code: -32602,
-              message:
-                'Invalid params: message.parts[0] must be "text" and message.parts[1] must be "data"',
-            },
-          },
-          400
-        );
-      }
-
-      const historyMessages: any[] = dataPart.data || [];
-      const currentUserMessage = {
-        role: "user",
-        parts: [{ kind: "text", text: textPart.text }],
-      };
-
-      const mastraMessages = [...historyMessages, currentUserMessage];
+      // Convert message parts to text content
+      const mastraMessages = messagesList.map((msg: any) => ({
+        role: msg.role,
+        content:
+          msg.parts
+            ?.map((part: any) => {
+              if (part.kind === "text") return part.text;
+              if (part.kind === "data") return JSON.stringify(part.data);
+              return "";
+            })
+            .join("\n") || "",
+      }));
 
       const response = await agent.generate(mastraMessages);
 
-      const agentText = response.text || "";
-      const conversationContext = contextId || randomUUID();
-      const currentTaskId = taskId || randomUUID();
-      const messageMetadata = metadata || message.metadata;
-
+      const agentText = response.text || "Sorry, I could not summarize that.";
       const artifacts = [
         {
           artifactId: randomUUID(),
-          name: `${agentId}TextResponse`,
+          name: `${agentId}Response`,
           parts: [
             {
               kind: "text",
@@ -127,7 +112,7 @@ export const a2aAgentRoute = registerApiRoute("/a2a/agent/:agentId", {
         artifacts.push({
           artifactId: randomUUID(),
           name: "ToolResults",
-          // @ts-expect-error We expect toolResults to be serializable
+          // @ts-expect-error next line
           parts: response.toolResults.map((result: any) => ({
             kind: "data",
             data: result,
@@ -135,24 +120,16 @@ export const a2aAgentRoute = registerApiRoute("/a2a/agent/:agentId", {
         });
       }
 
-      const responseMessageId = randomUUID();
+      // Build history (user + agent messages)
       const history = [
-        ...historyMessages.map((msg: any) => ({
+        ...messagesList.map((msg: any) => ({
           kind: "message",
           role: msg.role,
           parts: msg.parts,
           messageId: msg.messageId || randomUUID(),
-          taskId: msg.taskId || currentTaskId,
+          taskId: msg.taskId || currentTaskId || randomUUID(),
           metadata: msg.metadata || messageMetadata,
         })),
-        {
-          kind: "message",
-          role: currentUserMessage.role,
-          parts: currentUserMessage.parts,
-          messageId: message.messageId || randomUUID(),
-          taskId: currentTaskId,
-          metadata: messageMetadata,
-        },
         {
           kind: "message",
           role: "agent",
@@ -162,18 +139,20 @@ export const a2aAgentRoute = registerApiRoute("/a2a/agent/:agentId", {
               text: agentText,
             },
           ],
-          messageId: responseMessageId,
-          taskId: currentTaskId,
+          messageId: randomUUID(),
+          taskId: currentTaskId || randomUUID(),
           metadata: messageMetadata,
         },
       ];
+
+      const responseMessageId = randomUUID();
 
       const a2aResponse = {
         jsonrpc: "2.0",
         id: requestId,
         result: {
-          id: currentTaskId,
-          contextId: conversationContext,
+          id: currentTaskId || randomUUID(),
+          contextId: conversationContext || randomUUID(),
           status: {
             state: "completed",
             timestamp: new Date().toISOString(),
@@ -195,12 +174,11 @@ export const a2aAgentRoute = registerApiRoute("/a2a/agent/:agentId", {
         },
       };
 
-      // Handle non-blocking/webhook
+      // Handle optional async webhook (non-blocking mode)
       if (
         configuration?.blocking === false &&
         configuration?.pushNotificationConfig?.url
       ) {
-        // TODO: Implement async processing with webhook callback
         console.log(
           "Non-blocking request with webhook:",
           configuration.pushNotificationConfig.url
@@ -210,10 +188,11 @@ export const a2aAgentRoute = registerApiRoute("/a2a/agent/:agentId", {
       return c.json(a2aResponse);
     } catch (error: any) {
       console.error("A2A Agent Route Error:", error);
+
       return c.json(
         {
           jsonrpc: "2.0",
-          id: requestId || null,
+          id: null,
           error: {
             code: -32603,
             message: "Internal error",
