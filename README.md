@@ -2,6 +2,8 @@
 
 This project provides two powerful AI agent services built using the Mastra framework: a **Text Summarizer** and a **Strategic Business Advisor**. Both agents are accessible via Agent-to-Agent (A2A) compliant JSON-RPC 2.0 APIs, making them easy to integrate with Telex.im or other agent platforms.
 
+**[Read the full tutorial: Building AI Agents with Mastra](https://dev.to/abisoyeo/building-ai-co-workers-that-actually-think-with-you-bee)**
+
 ## Features
 
 - **Two Specialized Agents**:
